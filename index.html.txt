@@ -1,0 +1,667 @@
+# COMPLETE SALES CRM CODE FOR NETLIFY
+# Save this entire content to a .txt file, then extract files as needed
+
+##############################################
+# 1. package.json
+##############################################
+
+{
+  "name": "sales-crm",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@emotion/react": "^11.11.1",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.14.3",
+    "@mui/material": "^5.14.3",
+    "firebase": "^10.4.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.14.2",
+    "typescript": "^5.1.6"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
+
+##############################################
+# 2. src/App.tsx
+##############################################
+
+import React, { useEffect, useState } from 'react';
+import { BrowserRouter as Router } from 'react-router-dom';
+import { initializeApp } from 'firebase/app';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import Box from '@mui/material/Box';
+import { AuthProvider } from './context/AuthContext';
+import { CustomersProvider } from './context/CustomersContext';
+import Routes from './Routes';
+import LoadingScreen from './components/LoadingScreen';
+
+const firebaseConfig = {
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+const theme = createTheme({
+  palette: {
+    primary: { main: '#4f46e5' },
+    secondary: { main: '#10b981' },
+    background: { default: '#f3f4f6' }
+  },
+  typography: {
+    fontFamily: '"Inter", sans-serif'
+  }
+});
+
+const App: React.FC = () => {
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, () => {
+      setLoading(false);
+    });
+    return unsubscribe;
+  }, []);
+
+  if (loading) return <LoadingScreen />;
+
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <AuthProvider auth={auth}>
+        <CustomersProvider db={db} storage={storage}>
+          <Router>
+            <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+              <Routes />
+            </Box>
+          </Router>
+        </CustomersProvider>
+      </AuthProvider>
+    </ThemeProvider>
+  );
+};
+
+export default App;
+
+##############################################
+# 3. src/Routes.tsx
+##############################################
+
+import React from 'react';
+import { Routes, Route } from 'react-router-dom';
+import PrivateRoute from './components/PrivateRoute';
+import DashboardPage from './pages/DashboardPage';
+import CustomerDetailPage from './pages/CustomerDetailPage';
+import LoginPage from './pages/LoginPage';
+
+const AppRoutes: React.FC = () => {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/" element={<PrivateRoute><DashboardPage /></PrivateRoute>} />
+      <Route path="/customers/:customerId" element={<PrivateRoute><CustomerDetailPage /></PrivateRoute>} />
+    </Routes>
+  );
+};
+
+export default AppRoutes;
+
+##############################################
+# 4. src/context/AuthContext.tsx
+##############################################
+
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { User, onAuthStateChanged } from 'firebase/auth';
+
+interface AuthContextType {
+  currentUser: User | null;
+  loading: boolean;
+}
+
+const AuthContext = createContext<AuthContextType>({
+  currentUser: null,
+  loading: true,
+});
+
+export const AuthProvider: React.FC<{ 
+  children: React.ReactNode;
+  auth: any;
+}> = ({ children, auth }) => {
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setLoading(false);
+    });
+    return unsubscribe;
+  }, [auth]);
+
+  return (
+    <AuthContext.Provider value={{ currentUser, loading }}>
+      {!loading && children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => useContext(AuthContext);
+
+##############################################
+# 5. src/context/CustomersContext.tsx
+##############################################
+
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { 
+  collection, query, where, onSnapshot, addDoc, 
+  doc, setDoc, deleteDoc, orderBy, Timestamp 
+} from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+
+interface Customer {
+  id: string;
+  name: string;
+  town: string;
+  contactPerson?: string;
+  phone?: string;
+  email?: string;
+  status: string;
+  createdAt?: Date;
+}
+
+interface InteractionLog {
+  id: string;
+  type: string;
+  notes: string;
+  nextAction?: string;
+  nextActionDate?: string;
+  createdAt: Date;
+}
+
+interface CustomerPhoto {
+  id: string;
+  url: string;
+  description?: string;
+  createdAt: Date;
+}
+
+interface CustomersContextType {
+  customers: Customer[];
+  logs: InteractionLog[];
+  photos: CustomerPhoto[];
+  loading: boolean;
+  addCustomer: (data: Omit<Customer, 'id'>) => Promise<void>;
+  updateCustomer: (id: string, data: Partial<Customer>) => Promise<void>;
+  deleteCustomer: (id: string) => Promise<void>;
+  addInteractionLog: (customerId: string, data: Omit<InteractionLog, 'id' | 'createdAt'>) => Promise<void>;
+  addPhoto: (customerId: string, file: File, description?: string) => Promise<void>;
+}
+
+const CustomersContext = createContext<CustomersContextType>({
+  customers: [],
+  logs: [],
+  photos: [],
+  loading: true,
+  addCustomer: async () => {},
+  updateCustomer: async () => {},
+  deleteCustomer: async () => {},
+  addInteractionLog: async () => {},
+  addPhoto: async () => {},
+});
+
+export const CustomersProvider: React.FC<{
+  children: React.ReactNode;
+  db: any;
+  storage: any;
+}> = ({ children, db, storage }) => {
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [logs, setLogs] = useState<InteractionLog[]>([]);
+  const [photos, setPhotos] = useState<CustomerPhoto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentCustomerId, setCurrentCustomerId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const customersQuery = query(collection(db, 'customers'), orderBy('name'));
+    const unsubscribe = onSnapshot(customersQuery, (snapshot) => {
+      const customersData = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate(),
+      })) as Customer[];
+      setCustomers(customersData);
+      setLoading(false);
+    });
+    return unsubscribe;
+  }, [db]);
+
+  useEffect(() => {
+    if (!currentCustomerId) return;
+
+    const logsQuery = query(
+      collection(db, 'customers', currentCustomerId, 'logs'),
+      orderBy('createdAt', 'desc')
+    );
+    const unsubscribeLogs = onSnapshot(logsQuery, (snapshot) => {
+      const logsData = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate(),
+      })) as InteractionLog[];
+      setLogs(logsData);
+    });
+
+    const photosQuery = query(
+      collection(db, 'customers', currentCustomerId, 'photos'),
+      orderBy('createdAt', 'desc')
+    );
+    const unsubscribePhotos = onSnapshot(photosQuery, (snapshot) => {
+      const photosData = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt?.toDate(),
+      })) as CustomerPhoto[];
+      setPhotos(photosData);
+    });
+
+    return () => {
+      unsubscribeLogs();
+      unsubscribePhotos();
+    };
+  }, [db, currentCustomerId]);
+
+  const addCustomer = async (data: Omit<Customer, 'id'>) => {
+    await addDoc(collection(db, 'customers'), {
+      ...data,
+      createdAt: Timestamp.now(),
+    });
+  };
+
+  const updateCustomer = async (id: string, data: Partial<Customer>) => {
+    await setDoc(doc(db, 'customers', id), data, { merge: true });
+  };
+
+  const deleteCustomer = async (id: string) => {
+    await deleteDoc(doc(db, 'customers', id));
+  };
+
+  const addInteractionLog = async (
+    customerId: string,
+    data: Omit<InteractionLog, 'id' | 'createdAt'>
+  ) => {
+    await addDoc(collection(db, 'customers', customerId, 'logs'), {
+      ...data,
+      createdAt: Timestamp.now(),
+    });
+  };
+
+  const addPhoto = async (customerId: string, file: File, description?: string) => {
+    const storageRef = ref(storage, `customers/${customerId}/${file.name}`);
+    const uploadResult = await uploadBytes(storageRef, file);
+    const downloadURL = await getDownloadURL(uploadResult.ref);
+    await addDoc(collection(db, 'customers', customerId, 'photos'), {
+      url: downloadURL,
+      description,
+      createdAt: Timestamp.now(),
+    });
+  };
+
+  return (
+    <CustomersContext.Provider value={{
+      customers, logs, photos, loading,
+      addCustomer, updateCustomer, deleteCustomer,
+      addInteractionLog, addPhoto
+    }}>
+      {children}
+    </CustomersContext.Provider>
+  );
+};
+
+export const useCustomers = () => useContext(CustomersContext);
+
+##############################################
+# 6. src/pages/DashboardPage.tsx
+##############################################
+
+import React from 'react';
+import { Box, Typography } from '@mui/material';
+import CustomerList from '../components/CustomerList';
+
+const DashboardPage: React.FC = () => {
+  return (
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+      <Box sx={{ width: 350, borderRight: '1px solid #e0e0e0' }}>
+        <CustomerList />
+      </Box>
+      <Box sx={{ flex: 1, p: 3 }}>
+        <Typography variant="h5" sx={{ mb: 2 }}>
+          Select a customer to view details
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
+
+export default DashboardPage;
+
+##############################################
+# 7. src/pages/CustomerDetailPage.tsx
+##############################################
+
+import React from 'react';
+import { useParams } from 'react-router-dom';
+import CustomerDetail from '../components/CustomerDetail';
+
+const CustomerDetailPage: React.FC = () => {
+  const { customerId } = useParams<{ customerId: string }>();
+  return customerId ? <CustomerDetail /> : <div>Customer ID not provided</div>;
+};
+
+export default CustomerDetailPage;
+
+##############################################
+# 8. src/components/CustomerList.tsx
+##############################################
+
+import React, { useContext, useState } from 'react';
+import {
+  List, ListItem, ListItemText, ListItemButton,
+  Divider, TextField, IconButton, Tooltip, Box, Typography
+} from '@mui/material';
+import { Add, ImportExport, Search } from '@mui/icons-material';
+import { CustomersContext } from '../context/CustomersContext';
+import CustomerModal from './modals/CustomerModal';
+import ImportModal from './modals/ImportModal';
+
+const CustomerList: React.FC = () => {
+  const { customers, loading } = useContext(CustomersContext);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [openModal, setOpenModal] = useState(false);
+  const [openImportModal, setOpenImportModal] = useState(false);
+
+  const filteredCustomers = customers.filter(customer =>
+    customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    customer.town.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  if (loading) {
+    return (
+      <Box p={4}>
+        <Typography>Loading customers...</Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ width: '100%', bgcolor: 'background.paper' }}>
+      <Box p={2} display="flex" justifyContent="space-between" alignItems="center">
+        <Typography variant="h6">Customers</Typography>
+        <Box>
+          <Tooltip title="Import">
+            <IconButton onClick={() => setOpenImportModal(true)}>
+              <ImportExport />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Add Customer">
+            <IconButton onClick={() => setOpenModal(true)}>
+              <Add />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      </Box>
+
+      <Box p={2}>
+        <TextField
+          fullWidth
+          variant="outlined"
+          placeholder="Search by name or town..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          InputProps={{
+            startAdornment: <Search color="action" sx={{ mr: 1 }} />,
+          }}
+        />
+      </Box>
+
+      <List>
+        {filteredCustomers.length === 0 ? (
+          <ListItem>
+            <ListItemText primary="No customers found" />
+          </ListItem>
+        ) : (
+          filteredCustomers.map((customer) => (
+            <React.Fragment key={customer.id}>
+              <ListItemButton href={`/customers/${customer.id}`}>
+                <ListItemText
+                  primary={customer.name}
+                  secondary={customer.town}
+                  primaryTypographyProps={{ fontWeight: 'medium' }}
+                />
+              </ListItemButton>
+              <Divider component="li" />
+            </React.Fragment>
+          ))
+        )}
+      </List>
+
+      <CustomerModal open={openModal} onClose={() => setOpenModal(false)} />
+      <ImportModal open={openImportModal} onClose={() => setOpenImportModal(false)} />
+    </Box>
+  );
+};
+
+export default CustomerList;
+
+##############################################
+# 9. src/components/modals/CustomerModal.tsx
+##############################################
+
+import React from 'react';
+import {
+  Dialog, DialogTitle, DialogContent, DialogActions,
+  TextField, Button, Select, MenuItem, FormControl, InputLabel
+} from '@mui/material';
+
+interface CustomerModalProps {
+  open: boolean;
+  onClose: () => void;
+  customer?: any;
+}
+
+const CustomerModal: React.FC<CustomerModalProps> = ({ open, onClose, customer }) => {
+  const [formData, setFormData] = React.useState({
+    name: '',
+    town: '',
+    contactPerson: '',
+    phone: '',
+    email: '',
+    status: 'Prospect'
+  });
+
+  React.useEffect(() => {
+    if (customer) {
+      setFormData({
+        name: customer.name || '',
+        town: customer.town || '',
+        contactPerson: customer.contactPerson || '',
+        phone: customer.phone || '',
+        email: customer.email || '',
+        status: customer.status || 'Prospect'
+      });
+    }
+  }, [customer]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Handle form submission (would connect to context)
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>{customer ? 'Edit Customer' : 'Add New Customer'}</DialogTitle>
+      <form onSubmit={handleSubmit}>
+        <DialogContent>
+          <TextField
+            margin="dense"
+            name="name"
+            label="Customer Name"
+            fullWidth
+            required
+            value={formData.name}
+            onChange={handleChange}
+          />
+          <TextField
+            margin="dense"
+            name="town"
+            label="Town"
+            fullWidth
+            required
+            value={formData.town}
+            onChange={handleChange}
+          />
+          <TextField
+            margin="dense"
+            name="contactPerson"
+            label="Contact Person"
+            fullWidth
+            value={formData.contactPerson}
+            onChange={handleChange}
+          />
+          <TextField
+            margin="dense"
+            name="phone"
+            label="Phone Number"
+            fullWidth
+            value={formData.phone}
+            onChange={handleChange}
+          />
+          <TextField
+            margin="dense"
+            name="email"
+            label="Email Address"
+            type="email"
+            fullWidth
+            value={formData.email}
+            onChange={handleChange}
+          />
+          <FormControl fullWidth margin="dense">
+            <InputLabel>Status</InputLabel>
+            <Select
+              name="status"
+              value={formData.status}
+              label="Status"
+              onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value }))}
+            >
+              <MenuItem value="Prospect">Prospect</MenuItem>
+              <MenuItem value="Active Customer">Active Customer</MenuItem>
+              <MenuItem value="Former Customer">Former Customer</MenuItem>
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="contained" color="primary">
+            Save
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
+  );
+};
+
+export default CustomerModal;
+
+##############################################
+# 10. src/index.tsx
+##############################################
+
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './index.css';
+
+const root = ReactDOM.createRoot(
+  document.getElementById('root') as HTMLElement
+);
+
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+##############################################
+# 11. public/index.html
+##############################################
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="description" content="Sales CRM Application" />
+  <title>Sales CRM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <noscript>You need to enable JavaScript to run this app.</noscript>
+  <div id="root"></div>
+</body>
+</html>
+
+##############################################
+# 12. netlify.toml (for deployment)
+##############################################
+
+[build]
+  command = "npm run build"
+  publish = "build"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
